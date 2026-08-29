@@ -1,0 +1,120 @@
+﻿@page "/genel-ortalama"
+@using GPAHesaplayici.Models
+@inject HafizaServisi Hafiza
+@using System.Text.Json
+@inject IJSRuntime JS
+
+<h3 style="color: #e0e0e0; margin-bottom: 20px;">Kümülatif GPA (CGPA) Hesaplayıcı</h3>
+
+<div style="margin-bottom: 25px;">
+    <input type="text" class="form-kontrol" placeholder="Dönem Adı (Örn: 1. Yarıyıl)" @bind="yeniDonem.DonemAdi" />
+
+    <!-- İpucu yazıları eklendi -->
+    <input type="number" class="form-kontrol" placeholder="Toplam Dönem Kredisi" min="1" @bind="yeniDonem.DonemKredisi" />
+    <input type="number" class="form-kontrol" style="width: 130px;" placeholder="Dönem GPA" step="0.01" min="0" max="4" @bind="yeniDonem.DonemOrtalamasi" />
+
+    <button class="btn-ekle" @onclick="DonemEkle">Dönem Ekle</button>
+
+    @if (!string.IsNullOrEmpty(hataMesaji))
+    {
+        <span style="color: red; margin-left: 10px; font-weight: bold;">@hataMesaji</span>
+    }
+</div>
+
+@foreach (var donem in donemListesi)
+{
+    <div class="ders-satiri">
+        <input type="text" class="form-kontrol" @bind="donem.DonemAdi" />
+        <input type="number" class="form-kontrol" style="width: 130px;" placeholder="Toplam Dönem Kredisi" min="1" @bind="donem.DonemKredisi" @bind:after="CgpaHesapla" />
+        <input type="number" class="form-kontrol" style="width: 130px;" placeholder="Dönem GPA" step="0.01" min="0" max="4" @bind="donem.DonemOrtalamasi" @bind:after="CgpaHesapla" />
+
+        <button class="btn-sil" @onclick="() => DonemSil(donem)">Sil</button>
+    </div>
+}
+
+<h3 style="margin-top: 20px; color: #e0e0e0;">Genel Ortalama (CGPA): <span style="color: #b600ff; text-shadow: 0 0 8px rgba(182,0,255,0.4);">@cgpaSonucu</span></h3>
+
+@code {
+    List<Donem> donemListesi => Hafiza.KayitliDonemler;
+    Donem yeniDonem = new Donem();
+    double cgpaSonucu = 0;
+    string hataMesaji = "";
+    int otomatikDonemSayaci = 1;
+
+    // YENİ: Sayfa yüklendiğinde tarayıcı hafızasını (Local Storage) kontrol et
+    protected override async Task OnInitializedAsync()
+    {
+        var kayitliVeri = await JS.InvokeAsync<string>("localStorage.getItem", "cgpaListesi");
+        if (!string.IsNullOrEmpty(kayitliVeri))
+        {
+            // JSON formatındaki metni alıp bizim Donem listemize çeviriyoruz
+            Hafiza.KayitliDonemler = JsonSerializer.Deserialize<List<Donem>>(kayitliVeri) ?? new List<Donem>();
+            otomatikDonemSayaci = Hafiza.KayitliDonemler.Count + 1;
+        }
+        CgpaHesapla();
+    }
+
+    // YENİ: Listeyi tarayıcıya kaydetme metodu
+    async Task VerileriKaydet()
+    {
+        var jsonMetin = JsonSerializer.Serialize(Hafiza.KayitliDonemler);
+        await JS.InvokeVoidAsync("localStorage.setItem", "cgpaListesi", jsonMetin);
+    }
+
+    // Dikkat: Metodlar artık "async Task" oldu
+    async Task DonemEkle()
+    {
+        if (yeniDonem.DonemKredisi == null || yeniDonem.DonemKredisi <= 0)
+        {
+            hataMesaji = "Geçerli bir kredi giriniz!"; return;
+        }
+        if (yeniDonem.DonemOrtalamasi == null || yeniDonem.DonemOrtalamasi < 0 || yeniDonem.DonemOrtalamasi > 4)
+        {
+            hataMesaji = "Ortalama 0 ile 4.0 arasında olmalıdır!"; return;
+        }
+        if (string.IsNullOrWhiteSpace(yeniDonem.DonemAdi))
+        {
+            yeniDonem.DonemAdi = $"{otomatikDonemSayaci}. Yarıyıl";
+            otomatikDonemSayaci++;
+        }
+
+        hataMesaji = "";
+        donemListesi.Add(yeniDonem);
+        yeniDonem = new Donem();
+        CgpaHesapla();
+
+        await VerileriKaydet(); // Ekledikten sonra kaydet!
+    }
+
+    async Task DonemSil(Donem silinecekDonem)
+    {
+        donemListesi.Remove(silinecekDonem);
+        CgpaHesapla();
+
+        await VerileriKaydet(); // Sildikten sonra kaydet!
+    }
+
+    void CgpaHesapla()
+    {
+        double genelToplamKredi = 0;
+        double genelToplamPuan = 0;
+
+        foreach (var donem in donemListesi)
+        {
+            double kredi = donem.DonemKredisi ?? 0;
+            double ortalama = donem.DonemOrtalamasi ?? 0;
+
+            genelToplamPuan += kredi * ortalama;
+            genelToplamKredi += kredi;
+        }
+
+        if (genelToplamKredi > 0)
+        {
+            cgpaSonucu = Math.Round(genelToplamPuan / genelToplamKredi, 2);
+        }
+        else
+        {
+            cgpaSonucu = 0;
+        }
+    }
+}

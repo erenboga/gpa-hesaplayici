@@ -1,0 +1,196 @@
+﻿@page "/"
+@using GPAHesaplayici.Models
+@inject HafizaServisi Hafiza
+@inject NavigationManager NavManager
+@using System.Text.Json
+@inject IJSRuntime JS
+
+<h3 style="color: #e0e0e0; margin-bottom: 20px;">Dönem GPA Hesaplayıcı</h3>
+
+<div style="margin-bottom: 25px;">
+    @* --- DERS ADI --- *@
+    <input type="text" class="form-kontrol" placeholder="Ders Adı (Örn: Matematik)" @bind="yeniDers.DersAdi" />
+
+    @* --- KREDİ (Boş bırakılabilir yapıya uygun) --- *@
+    <input type="number" class="form-kontrol" placeholder="Kredi (Örn: 3)" min="1" @bind="yeniDers.Kredi" />
+
+    @* --- HARF NOTU --- *@
+    <select class="form-kontrol" @bind="yeniDers.HarfNotu">
+        <option value="">Not Seçin</option>
+        <option value="AA">AA</option>
+        <option value="BA">BA</option>
+        <option value="BB">BB</option>
+        <option value="CB">CB</option>
+        <option value="CC">CC</option>
+        <option value="DC">DC</option>
+        <option value="DD">DD</option>
+        <option value="FD">FD</option>
+        <option value="FF">FF</option>
+    </select>
+
+    @* --- EKLE BUTONU --- *@
+    <button class="btn-ekle" @onclick="DersEkle">Ekle</button>
+
+    @* --- HATA MESAJI (Burayı kontrol et, buton neden çalışmıyor burada yazar) --- *@
+    @if (!string.IsNullOrEmpty(hataMesaji))
+    {
+        <div style="color: #ff4d4d; margin-top: 10px; font-weight: bold; font-size: 14px;">
+            ⚠️ @hataMesaji
+        </div>
+    }
+</div>
+
+@* --- EKLENEN DERSLER LİSTESİ --- *@
+@foreach (var ders in dersListesi)
+{
+    <div class="ders-satiri">
+        <input type="text" class="form-control form-kontrol" @bind="ders.DersAdi" />
+        <input type="number" class="form-kontrol" style="width: 100px;" placeholder="Kredi" min="1" @bind="ders.Kredi" @bind:after="OrtalamaHesapla" />
+
+        <select class="form-kontrol" @bind="ders.HarfNotu" @bind:after="OrtalamaHesapla">
+            <option value="">Not Seçin</option>
+            <option value="AA">AA</option>
+            <option value="BA">BA</option>
+            <option value="BB">BB</option>
+            <option value="CB">CB</option>
+            <option value="CC">CC</option>
+            <option value="DC">DC</option>
+            <option value="DD">DD</option>
+            <option value="FD">FD</option>
+            <option value="FF">FF</option>
+        </select>
+
+        <button class="btn-sil" @onclick="() => DersSil(ders)">Sil</button>
+    </div>
+}
+
+@* --- ALT TOPLAM VE AKTARMA BÖLÜMÜ --- *@
+<div style="display: flex; align-items: center; justify-content: space-between; margin-top: 30px; padding: 20px; background-color: #242424; border-radius: 12px; border: 1px solid #333;">
+    <h3 style="color: #e0e0e0; margin: 0;">Dönem GPA: <span style="color: #b600ff; text-shadow: 0 0 8px rgba(182,0,255,0.4);">@gpaSonucu.ToString("0.00")</span></h3>
+
+    @if (doneminToplamKredisi > 0)
+    {
+        <button class="btn-ekle" style="background-color: #28a745;" @onclick="KumulatifeAktar">
+            Kümülatif GPA'ye Ekle ➔
+        </button>
+    }
+</div>
+
+@code
+{
+    List<Ders> dersListesi = new List<Ders>();
+    Ders yeniDers = new Ders();
+    double gpaSonucu = 0;
+    double doneminToplamKredisi = 0;
+    string hataMesaji = "";
+    int otomatikDersSayaci = 1;
+
+    // YENİ: Sayfa açıldığında yarım kalan dersleri geri yükle
+    protected override async Task OnInitializedAsync()
+    {
+        var kayitliVeri = await JS.InvokeAsync<string>("localStorage.getItem", "aktifDonem");
+        if (!string.IsNullOrEmpty(kayitliVeri))
+        {
+            dersListesi = JsonSerializer.Deserialize<List<Ders>>(kayitliVeri) ?? new List<Ders>();
+            otomatikDersSayaci = dersListesi.Count + 1;
+        }
+        OrtalamaHesapla();
+    }
+
+    // YENİ: Dersleri tarayıcıya kaydet
+    async Task VerileriKaydet()
+    {
+        var json = JsonSerializer.Serialize(dersListesi);
+        await JS.InvokeVoidAsync("localStorage.setItem", "aktifDonem", json);
+    }
+
+    async Task DersEkle()
+    {
+        if (yeniDers.Kredi == null || yeniDers.Kredi <= 0)
+        {
+            hataMesaji = "Lütfen geçerli bir kredi giriniz!"; return;
+        }
+        if (string.IsNullOrWhiteSpace(yeniDers.HarfNotu))
+        {
+            hataMesaji = "Lütfen bir harf notu seçiniz!"; return;
+        }
+        if (string.IsNullOrWhiteSpace(yeniDers.DersAdi))
+        {
+            yeniDers.DersAdi = $"Ders {otomatikDersSayaci}";
+            otomatikDersSayaci++;
+        }
+
+        hataMesaji = "";
+        dersListesi.Add(yeniDers);
+        yeniDers = new Ders();
+        OrtalamaHesapla();
+
+        await VerileriKaydet(); // Ekledikten sonra kaydet
+    }
+
+    async Task DersSil(Ders silinecekDers)
+    {
+        dersListesi.Remove(silinecekDers);
+        OrtalamaHesapla();
+
+        await VerileriKaydet(); // Sildikten sonra kaydet
+    }
+
+    void OrtalamaHesapla()
+    {
+        double toplamPuan = 0;
+        doneminToplamKredisi = 0;
+        gpaSonucu = 0;
+
+        Dictionary<string, double> HarfNotlari = new Dictionary<string, double>()
+        {
+            {"AA", 4}, {"BA", 3.5}, {"BB", 3}, {"CB", 2.5},
+            {"CC", 2}, {"DC", 1.5}, {"DD", 1}, {"FD", 0.5}, {"FF", 0}
+        };
+
+        foreach (var ders in dersListesi)
+        {
+            if (HarfNotlari.TryGetValue(ders.HarfNotu, out double katsayi))
+            {
+                double kredi = ders.Kredi ?? 0;
+                toplamPuan += katsayi * kredi;
+                doneminToplamKredisi += kredi;
+            }
+        }
+
+        if (doneminToplamKredisi > 0)
+        {
+            gpaSonucu = Math.Round(toplamPuan / doneminToplamKredisi, 2);
+        }
+    }
+
+    // GÜNCELLENDİ: Hem listeye ekliyor, hem kaydediyor
+    async Task KumulatifeAktar()
+    {
+        // 1. Olası bir hatayı önlemek için Kümülatif sayfasına hiç girilmemişse önce oranın hafızasını yükle
+        var eskiCgpaKaydi = await JS.InvokeAsync<string>("localStorage.getItem", "cgpaListesi");
+        if (!string.IsNullOrEmpty(eskiCgpaKaydi) && Hafiza.KayitliDonemler.Count == 0)
+        {
+            Hafiza.KayitliDonemler = JsonSerializer.Deserialize<List<Donem>>(eskiCgpaKaydi) ?? new List<Donem>();
+        }
+
+        // 2. Yeni dönemi ekle
+        Donem yeniAktarilan = new Donem
+        {
+            DonemAdi = $"{Hafiza.KayitliDonemler.Count + 1}. Dönem (Otomatik)",
+            DonemKredisi = doneminToplamKredisi,
+            DonemOrtalamasi = gpaSonucu
+        };
+        Hafiza.KayitliDonemler.Add(yeniAktarilan);
+
+        // 3. Kümülatif listeyi (cgpaListesi) Local Storage'a kaydet ki diğer sayfaya gidince veriyi oradan okusun
+        var cgpaJson = JsonSerializer.Serialize(Hafiza.KayitliDonemler);
+        await JS.InvokeVoidAsync("localStorage.setItem", "cgpaListesi", cgpaJson);
+
+        // İşlem bittikten sonra mevcut ders listesini temizlemek istersen şu iki satırı aktif edebilirsin:
+        // dersListesi.Clear();
+        // await VerileriKaydet();
+
+        NavManager.NavigateTo("/genel-ortalama");
+    }
+}
